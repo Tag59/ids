@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tag59/ids/internal/configuration"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
@@ -20,9 +21,15 @@ var (
 	mu         sync.Mutex                    // Mutex for concurrent access
 )
 
-// ProcessPacket analyzes a packet and detects simple port scans
+// ProcessPacket: core logic with default thresholds (100 ports, 10s)
 func ProcessPacket(pkt gopacket.Packet) (alert string, detected bool) {
-	// Get network layer (IP) information
+	const defaultThreshold = 100
+	const defaultWindow = 10
+	return processPacketWithThreshold(pkt, defaultThreshold, defaultWindow)
+}
+
+// processPacketWithThreshold: core logic, threshold and time window are parameters
+func processPacketWithThreshold(pkt gopacket.Packet, portScanThreshold int, timeWindowSeconds int) (alert string, detected bool) {
 	ipLayer := pkt.NetworkLayer()
 	if ipLayer == nil {
 		return "", false
@@ -30,25 +37,18 @@ func ProcessPacket(pkt gopacket.Packet) (alert string, detected bool) {
 
 	srcIP := ipLayer.NetworkFlow().Src().String()
 
-	// Get TCP layer
 	tcpLayer := pkt.Layer(layers.LayerTypeTCP)
 	if tcpLayer == nil {
 		return "", false
 	}
 	tcp, _ := tcpLayer.(*layers.TCP)
 
-	// We are interested only in SYN packets without ACK
-	// (first step of the TCP 3-way handshake, typical of port scans)
 	if tcp.SYN && !tcp.ACK {
-		//fmt.Println("Detected SYN from", srcIP, "to port", tcp.DstPort) // Debug print
-
 		mu.Lock()
 		defer mu.Unlock()
 
-		// Look up this source IP in the detection map
 		det, exists := detections[srcIP]
 		if !exists {
-			// Initialize new entry if it's the first packet for this IP
 			det = &Detection{
 				ports: make(map[uint16]bool),
 				last:  time.Now(),
@@ -56,15 +56,13 @@ func ProcessPacket(pkt gopacket.Packet) (alert string, detected bool) {
 			detections[srcIP] = det
 		}
 
-		// Record this destination port if not already seen
 		if !det.ports[uint16(tcp.DstPort)] {
 			det.ports[uint16(tcp.DstPort)] = true
 			det.count++
 			det.last = time.Now()
 		}
 
-		// Threshold: if >100 unique ports in less than 10 seconds → alert
-		if det.count > 100 && time.Since(det.last) < 10*time.Second {
+		if det.count >= portScanThreshold && time.Since(det.last) <= time.Duration(timeWindowSeconds)*time.Second {
 			alert = "Port scan detected from " + srcIP
 			detected = true
 
@@ -78,4 +76,9 @@ func ProcessPacket(pkt gopacket.Packet) (alert string, detected bool) {
 	}
 
 	return "", false
+}
+
+// ProcessPacketWithConfig: wrapper that uses config from YAML
+func ProcessPacketWithConfig(pkt gopacket.Packet, cfg *configuration.Config) (alert string, detected bool) {
+	return processPacketWithThreshold(pkt, *cfg.PortScanThreshold, *cfg.TimeWindowSeconds)
 }

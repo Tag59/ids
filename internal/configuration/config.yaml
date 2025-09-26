@@ -1,0 +1,7 @@
+interface: "eth0"
+snaplen: 65535
+promiscuous: true
+timeout: 0        # 0 for BlockForever
+portScanThreshold: 100
+timeWindowSeconds: 10
+pcapFile: ""  # Path to pcap file for testing; empty means live capture
