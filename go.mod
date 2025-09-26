@@ -1,4 +1,4 @@
-module github.com/Tag59/ids.git
+module github.com/Tag59/ids
 
 go 1.22.2
 
